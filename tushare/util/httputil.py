@@ -5,7 +5,10 @@ from urllib.error import URLError
 
 def get(url, timeout=10):
     try:
-        request = Request(url)
+        if isinstance(url, Request):
+            request = url
+        else:
+            request = Request(url)
         text = urlopen(request, timeout=timeout).read()
     except URLError as er:
         raise RequestError(er)
