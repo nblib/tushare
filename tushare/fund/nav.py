@@ -15,12 +15,12 @@ import re
 import pandas as pd
 import numpy as np
 from tushare.fund import cons as ct
+from tushare.fund import parser
 from tushare.util import dateu as du
-try:
-    from urllib.request import urlopen, Request
-except ImportError:
-    from urllib2 import urlopen, Request
-
+from tushare.util.exception import RequestError, UnkownError, Not200Error, ParseError
+from tushare.util import httputil
+from urllib.request import urlopen, Request
+from urllib.error import URLError
 
 def get_nav_open(fund_type='all'):
     """
@@ -64,7 +64,7 @@ def get_nav_open(fund_type='all'):
         limit_cnt = int(nums/pages)+1   # 每次取的数量
         fund_dfs = []
         for page in range(1, pages+1):
-            fund_dfs = _parse_fund_data(ct.SINA_NAV_DATA_URL %
+            fund_df = _parse_fund_data(ct.SINA_NAV_DATA_URL %
                                        (ct.P_TYPE['http'], ct.DOMAINS['vsf'],
                                         ct.NAV_OPEN_KEY[fund_type],
                                         ct.NAV_OPEN_API[fund_type],
@@ -72,6 +72,7 @@ def get_nav_open(fund_type='all'):
                                         limit_cnt,
                                         ct.NAV_OPEN_T2[fund_type],
                                         ct.NAV_OPEN_T3))
+            fund_dfs.append(fund_df)
 
         return pd.concat(fund_dfs, ignore_index=True)
 
@@ -263,14 +264,14 @@ def get_fund_info(code):
     '''
     request = ct.SINA_FUND_INFO_URL % (
         ct.P_TYPE['http'], ct.DOMAINS['ssf'], code)
-    text = urlopen(request, timeout=10).read()
+    text = httputil.get(request)
     text = text.decode('gbk')
     org_js = json.loads(text)
 
     status_code = int(org_js['result']['status']['code'])
     if status_code != 0:
         status = str(org_js['result']['status']['msg'])
-        raise ValueError(status)
+        raise Not200Error(status)
     data = org_js['result']['data']
     fund_df = pd.DataFrame(data, columns=ct.FUND_INFO_COLS, index=[0])
     fund_df = fund_df.set_index('symbol')
@@ -280,56 +281,23 @@ def get_fund_info(code):
 
 def _parse_fund_data(url, fund_type='open'):
 
-    ct._write_console()
+    text = httputil.get(url)
+    result = parser.parse_fund_data(text)
+    fund_df = pd.DataFrame(result,
+                           columns=ct.NAV_COLUMNS[fund_type])
+    fund_df.fillna(0, inplace=True)
+    return fund_df
 
-    try:
-        request = Request(url)
-
-        text = urlopen(request, timeout=10).read()
-        if text == 'null':
-            return None
-        text = text.decode('gbk') if ct.PY3 else text
-        text = text.split('data:')[1].split(',exec_time')[0]
-        reg = re.compile(r'\,(.*?)\:')
-        text = reg.sub(r',"\1":', text)
-        text = text.replace('"{symbol', '{"symbol')
-        text = text.replace('{symbol', '{"symbol"')
-        if ct.PY3:
-            jstr = json.dumps(text)
-        else:
-            jstr = json.dumps(text, encoding='gbk')
-        org_js = json.loads(jstr)
-        fund_df = pd.DataFrame(pd.read_json(org_js, dtype={'symbol': object}),
-                               columns=ct.NAV_COLUMNS[fund_type])
-        fund_df.fillna(0, inplace=True)
-        return fund_df
-    except Exception as er:
-        print(str(er))
 
 
 def _get_fund_num(url):
     """
         获取基金数量
     """
+    text = httputil.get(url)
+    nums = parser.parse_fund_count(text)
+    return nums
 
-    ct._write_console()
-    try:
-        request = Request(url)
-        text = urlopen(request, timeout=10).read()
-        text = text.decode('gbk')
-        if text == 'null':
-            raise ValueError('get fund num error')
-
-        text = text.split('((')[1].split('))')[0]
-        reg = re.compile(r'\,(.*?)\:')
-        text = reg.sub(r',"\1":', text)
-        text = text.replace('{total_num', '{"total_num"')
-        text = text.replace('null', '0')
-        org_js = json.loads(text)
-        nums = org_js["total_num"]
-        return int(nums)
-    except Exception as er:
-        print(str(er))
 
 
 def _get_nav_histroy_num(code, start, end, ismonetary=False):
@@ -351,13 +319,13 @@ def _get_nav_histroy_num(code, start, end, ismonetary=False):
                           (ct.P_TYPE['http'], ct.DOMAINS['ssf'],
                            code, start, end))
 
-    text = urlopen(request, timeout=10).read()
+    text = httputil.get(request)
     text = text.decode('gbk')
     org_js = json.loads(text)
     status_code = int(org_js['result']['status']['code'])
     if status_code != 0:
         status = str(org_js['result']['status']['msg'])
-        raise ValueError(status)
+        raise Not200Error(status)
     nums = org_js['result']['data']['total_num']
 
     return int(nums)
@@ -380,14 +348,14 @@ def _parse_nav_history_data(code, start, end, nums, ismonetary=False, retry_coun
             request = Request(ct.SINA_NAV_HISTROY_DATA_URL %
                               (ct.P_TYPE['http'], ct.DOMAINS['ssf'],
                                code, start, end, nums))
-        text = urlopen(request, timeout=timeout).read()
+        text = httputil.get(request, timeout=timeout)
         text = text.decode('gbk')
         org_js = json.loads(text)
 
         status_code = int(org_js['result']['status']['code'])
         if status_code != 0:
             status = str(org_js['result']['status']['msg'])
-            raise ValueError(status)
+            raise Not200Error(status)
 
         data = org_js['result']['data']['data']
 

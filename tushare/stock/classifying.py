@@ -13,7 +13,6 @@ from tushare.stock import cons as ct
 from tushare.stock import ref_vars as rv
 import json
 import re
-from pandas.util.testing import _network_error_classes
 import time
 import tushare.stock.fundamental as fd
 from tushare.util.netbase import Client
@@ -197,7 +196,7 @@ def _get_detail(tag, retry_count=3, pause=0.001):
                                                                    p,tag))
                 text = urlopen(request, timeout=10).read()
                 text = text.decode('gbk')
-            except _network_error_classes:
+            except Exception:
                 pass
             else:
                 break
